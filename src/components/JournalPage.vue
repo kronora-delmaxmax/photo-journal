@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, reactive } from 'vue'
 import type { JournalPhoto, PhotoAnalysis, ColorPalette } from '@/stores/journal'
 
 const props = defineProps<{
@@ -7,14 +7,55 @@ const props = defineProps<{
   analysis: PhotoAnalysis | null
   palette: ColorPalette
   templateId: string
-  paperBg: string  // 'washi' | 'kraft' | 'plain' | 'grid' | 'cream'
-  cutouts: Record<string, string>  // photo id → cutout data URL
+  paperBg: string
+  cutouts: Record<string, string>
+  strokeEnabled?: boolean
+  strokeColor?: string
 }>()
 
 const dateStr = computed(() => {
   const d = new Date()
   return d.toLocaleDateString('zh-CN', { year:'numeric', month:'long', day:'numeric', weekday:'short' })
 })
+
+// ── Photo drag/pan ──
+const positions = reactive<Record<string, { x: number; y: number }>>({})
+let dragging: { id: string; startX: number; startY: number; origX: number; origY: number; elW: number; elH: number } | null = null
+
+function getPos(photoId: string) {
+  if (!positions[photoId]) positions[photoId] = { x: 50, y: 50 }
+  return positions[photoId]
+}
+
+function onDragStart(e: MouseEvent | TouchEvent, photoId: string) {
+  e.preventDefault()
+  const pos = getPos(photoId)
+  const pt = 'touches' in e ? e.touches[0] : e
+  const el = (e.currentTarget as HTMLElement)
+  dragging = {
+    id: photoId,
+    startX: pt.clientX, startY: pt.clientY,
+    origX: pos.x, origY: pos.y,
+    elW: el.clientWidth, elH: el.clientHeight,
+  }
+}
+
+function onDragMove(e: MouseEvent | TouchEvent) {
+  if (!dragging) return
+  const pt = 'touches' in e ? e.touches[0] : e
+  const dx = pt.clientX - dragging.startX
+  const dy = pt.clientY - dragging.startY
+  const pos = getPos(dragging.id)
+  // Convert pixel delta to % based on container size: 1:1 tracking
+  const scaleX = dragging.elW > 0 ? (dx / dragging.elW) * 100 : 0
+  const scaleY = dragging.elH > 0 ? (dy / dragging.elH) * 100 : 0
+  pos.x = Math.max(0, Math.min(100, dragging.origX - scaleX))
+  pos.y = Math.max(0, Math.min(100, dragging.origY - scaleY))
+}
+
+function onDragEnd() {
+  dragging = null
+}
 
 // Map paper names to CSS background values
 const paperColors: Record<string, string> = {
@@ -36,6 +77,14 @@ const paperTextures: Record<string, string> = {
 const bgColor = computed(() => paperColors[props.paperBg] || '#ffffff')
 const bgTexture = computed(() => paperTextures[props.paperBg] || 'none')
 
+const strokeCss = computed(() => {
+  if (!props.strokeEnabled || !props.strokeColor) return {}
+  return {
+    outline: `3px solid ${props.strokeColor}`,
+    outlineOffset: '-1px',
+  }
+})
+
 function hasCutout(photoId: string): boolean {
   return !!props.cutouts[photoId]
 }
@@ -51,19 +100,27 @@ const randomRotate = (seed: number) => {
 </script>
 
 <template>
-  <div class="journal-page" :style="{
+  <div class="journal-page" :class="{ 'has-stroke': strokeEnabled }"
+    @mousemove="onDragMove" @touchmove.prevent="onDragMove"
+    @mouseup="onDragEnd" @touchend="onDragEnd" @mouseleave="onDragEnd"
+    :style="{
     '--jp-primary': palette.primary,
     '--jp-secondary': palette.secondary,
     '--jp-accent': palette.accent,
     '--jp-bg': bgColor,
     '--jp-texture': bgTexture,
+    '--stroke-color': strokeColor || '#2c2420',
   }">
 
     <!-- ═══ TEMPLATE: Magazine Cover ═══ -->
     <div v-if="templateId === 'magazine'" class="tpl-magazine">
       <!-- Hero photo -->
       <div class="mag-hero" v-if="photos[0]">
-        <img :src="cutoutSrc(photos[0])" alt="" :class="{ 'img-cutout': hasCutout(photos[0].id) }" />
+        <img :src="cutoutSrc(photos[0])" alt="" draggable="false"
+            :style="{ objectFit: 'cover', objectPosition: `${getPos(photos[0].id).x}% ${getPos(photos[0].id).y}%` }"
+            :class="{ 'img-cutout': hasCutout(photos[0].id) }"
+            @mousedown.prevent="onDragStart($event, photos[0].id)"
+            @touchstart.prevent="onDragStart($event, photos[0].id)" />
         <div class="mag-hero-overlay">
           <div class="mag-date">{{ dateStr }}</div>
           <h2 class="mag-title serif" v-if="analysis">{{ analysis.mood }}</h2>
@@ -72,7 +129,11 @@ const randomRotate = (seed: number) => {
       <!-- Secondary photos -->
       <div class="mag-secondary" v-if="photos.length > 1">
         <div class="mag-sec-item" v-for="(photo, i) in photos.slice(1, 4)" :key="photo.id">
-          <img :src="photo.dataUrl" alt="" />
+          <img :src="cutoutSrc(photo)" alt="" draggable="false"
+            :style="{ objectFit: 'cover', objectPosition: `${getPos(photo.id).x}% ${getPos(photo.id).y}%` }"
+            :class="{ 'img-cutout': hasCutout(photo.id) }"
+            @mousedown.prevent="onDragStart($event, photo.id)"
+            @touchstart.prevent="onDragStart($event, photo.id)" />
         </div>
       </div>
       <!-- Caption -->
@@ -90,7 +151,11 @@ const randomRotate = (seed: number) => {
       </div>
       <div class="grid-photos" :class="'grid-count-' + Math.min(photos.length, 4)">
         <div class="grid-photo" v-for="photo in photos.slice(0, 4)" :key="photo.id">
-          <img :src="photo.dataUrl" alt="" />
+          <img :src="cutoutSrc(photo)" alt="" draggable="false"
+            :style="{ objectFit: 'cover', objectPosition: `${getPos(photo.id).x}% ${getPos(photo.id).y}%` }"
+            :class="{ 'img-cutout': hasCutout(photo.id) }"
+            @mousedown.prevent="onDragStart($event, photo.id)"
+            @touchstart.prevent="onDragStart($event, photo.id)" />
         </div>
       </div>
       <div class="grid-text" v-if="analysis">
@@ -105,7 +170,11 @@ const randomRotate = (seed: number) => {
     <!-- ═══ TEMPLATE: Poetic ═══ -->
     <div v-else-if="templateId === 'poetic'" class="tpl-poetic">
       <div class="poem-photo" v-if="photos[0]">
-        <img :src="cutoutSrc(photos[0])" alt="" :class="{ 'img-cutout': hasCutout(photos[0].id) }" />
+        <img :src="cutoutSrc(photos[0])" alt="" draggable="false"
+            :style="{ objectFit: 'cover', objectPosition: `${getPos(photos[0].id).x}% ${getPos(photos[0].id).y}%` }"
+            :class="{ 'img-cutout': hasCutout(photos[0].id) }"
+            @mousedown.prevent="onDragStart($event, photos[0].id)"
+            @touchstart.prevent="onDragStart($event, photos[0].id)" />
       </div>
       <div class="poem-text" v-if="analysis">
         <div class="poem-date serif">{{ dateStr }}</div>
@@ -115,7 +184,11 @@ const randomRotate = (seed: number) => {
       </div>
       <div class="poem-thumbs" v-if="photos.length > 1">
         <div class="poem-thumb" v-for="photo in photos.slice(1, 3)" :key="photo.id">
-          <img :src="photo.dataUrl" alt="" />
+          <img :src="cutoutSrc(photo)" alt="" draggable="false"
+            :style="{ objectFit: 'cover', objectPosition: `${getPos(photo.id).x}% ${getPos(photo.id).y}%` }"
+            :class="{ 'img-cutout': hasCutout(photo.id) }"
+            @mousedown.prevent="onDragStart($event, photo.id)"
+            @touchstart.prevent="onDragStart($event, photo.id)" />
         </div>
       </div>
     </div>
@@ -132,7 +205,11 @@ const randomRotate = (seed: number) => {
             zIndex: photos.length - i,
           }"
         >
-          <img :src="photo.dataUrl" alt="" />
+          <img :src="cutoutSrc(photo)" alt="" draggable="false"
+            :style="{ objectFit: 'cover', objectPosition: `${getPos(photo.id).x}% ${getPos(photo.id).y}%` }"
+            :class="{ 'img-cutout': hasCutout(photo.id) }"
+            @mousedown.prevent="onDragStart($event, photo.id)"
+            @touchstart.prevent="onDragStart($event, photo.id)" />
           <!-- Tape mark -->
           <div class="tape" :style="{ background: i % 2 === 0 ? 'rgba(255,255,255,0.6)' : 'rgba(200,180,150,0.5)' }"></div>
         </div>
@@ -157,7 +234,11 @@ const randomRotate = (seed: number) => {
           :style="{ transform: `rotate(${i % 2 === 0 ? -2 : 2}deg)` }"
         >
           <div class="polaroid-img">
-            <img :src="photo.dataUrl" alt="" />
+            <img :src="cutoutSrc(photo)" alt="" draggable="false"
+            :style="{ objectFit: 'cover', objectPosition: `${getPos(photo.id).x}% ${getPos(photo.id).y}%` }"
+            :class="{ 'img-cutout': hasCutout(photo.id) }"
+            @mousedown.prevent="onDragStart($event, photo.id)"
+            @touchstart.prevent="onDragStart($event, photo.id)" />
           </div>
           <div class="polaroid-caption serif" v-if="i === 0 && analysis">
             {{ analysis.caption?.split('\n')[0] || '' }}
@@ -201,6 +282,8 @@ const randomRotate = (seed: number) => {
   transform: rotate(-3deg);
   z-index: 5;
 }
+
+/* All stroke is now Canvas contour — applied via img-cutout + stroked cutout images */
 
 /* ═══════════════ MAGAZINE COVER ═══════════════ */
 .tpl-magazine {

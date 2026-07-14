@@ -243,6 +243,79 @@ export async function applyStroke(
   return { url: canvas.toDataURL('image/png'), pixelWidth: strokeWidth }
 }
 
+// ═══════════════ Stroke overlay on ORIGINAL photo (non-cutout templates) ═══════════════
+// Generates contour stroke from cutout mask, composites onto original photo
+export async function compositeStrokeOnOriginal(
+  originalUrl: string,
+  cutoutUrl: string,
+  strokeColor: string = '#2c2420',
+  strokeLevel: number = 2
+): Promise<{ url: string; pixelWidth: number }> {
+  const originalImg = await loadImage(originalUrl)
+  const cutoutImg = await loadImage(cutoutUrl)
+  const w = originalImg.width, h = originalImg.height
+  const smallerDim = Math.min(w, h)
+
+  let strokeWidth: number
+  if (strokeLevel >= 4) {
+    strokeWidth = 25
+  } else {
+    const ratios = [0, 0.005, 0.008, 0.012]
+    strokeWidth = Math.max(2, Math.round(smallerDim * (ratios[strokeLevel] || 0.008)))
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width = w; canvas.height = h
+  const ctx = canvas.getContext('2d')!
+
+  // Draw original photo
+  ctx.drawImage(originalImg, 0, 0)
+
+  // Get alpha from cutout to find subject mask
+  const cutCanvas = document.createElement('canvas')
+  cutCanvas.width = w; cutCanvas.height = h
+  const cutCtx = cutCanvas.getContext('2d')!
+  cutCtx.drawImage(cutoutImg, 0, 0, w, h)
+  const cutData = cutCtx.getImageData(0, 0, w, h)
+  const alpha = new Uint8Array(w * h)
+  for (let i = 0; i < alpha.length; i++) {
+    alpha[i] = cutData.data[i * 4 + 3]
+  }
+
+  // Dilate to find stroke area
+  const dilated = new Uint8Array(alpha.length)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let maxVal = 0
+      for (let dy = -strokeWidth; dy <= strokeWidth; dy++) {
+        for (let dx = -strokeWidth; dx <= strokeWidth; dx++) {
+          const nx = x + dx, ny = y + dy
+          if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+            const val = alpha[ny * w + nx]
+            if (val > maxVal) maxVal = val
+          }
+        }
+      }
+      dilated[y * w + x] = maxVal
+    }
+  }
+
+  // Draw stroke pixels on top of original
+  const sc = hexToRgba(strokeColor)
+  const imageData = ctx.getImageData(0, 0, w, h)
+  for (let i = 0; i < alpha.length; i++) {
+    if (dilated[i] > 0 && alpha[i] < 128) {
+      const idx = i * 4
+      imageData.data[idx] = sc.r
+      imageData.data[idx + 1] = sc.g
+      imageData.data[idx + 2] = sc.b
+    }
+  }
+  ctx.putImageData(imageData, 0, 0)
+
+  return { url: canvas.toDataURL('image/png'), pixelWidth: strokeWidth }
+}
+
 function hexToRgba(hex: string): { r: number; g: number; b: number } {
   const m = hex.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i)
   if (!m) return { r: 0, g: 0, b: 0 }

@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { useJournalStore } from '@/stores/journal'
 import { extractColors } from '@/services/color'
 import { analyzePhotos } from '@/services/ai'
-import { generateCutout, preloadModel, applyStroke } from '@/services/imageProcessing'
+import { generateCutout, preloadModel, applyStroke, compositeStrokeOnOriginal } from '@/services/imageProcessing'
 import JournalPage from '@/components/JournalPage.vue'
 
 const router = useRouter()
@@ -13,14 +13,27 @@ const isProcessing = ref(false)
 const progressMsg = ref('')
 const cutouts = reactive<Record<string, string>>({})
 const strokedCutouts = reactive<Record<string, string>>({})
+const strokedOriginals = reactive<Record<string, string>>({})  // original + stroke composite
 const selectedPaper = ref('washi')
 const strokeEnabled = ref(false)
 const strokeColor = ref('#2c2420')
-const strokeLevel = ref(2)  // 1=thin, 2=medium, 3=thick
+const strokeLevel = ref(2)
 const strokePx = ref(0)
 
-// Display cutouts: with or without stroke
-const displayCutouts = computed(() => strokeEnabled.value ? { ...cutouts, ...strokedCutouts } : cutouts)
+// Cutout templates (magazine/poetic) use stroked cutout; others use stroked original
+const isCutoutTemplate = computed(() =>
+  store.selectedTemplate === 'magazine' || store.selectedTemplate === 'poetic'
+)
+const displayCutouts = computed(() => {
+  if (isCutoutTemplate.value) {
+    // Magazine/poetic: always use cutout (transparent bg)
+    if (strokeEnabled.value) return { ...cutouts, ...strokedCutouts }
+    return cutouts
+  }
+  // Grid/collage/diary: use original photo normally, stroked composite when enabled
+  if (strokeEnabled.value) return strokedOriginals
+  return {}  // empty → JournalPage falls back to photo.dataUrl (original)
+})
 
 // Redirect if no photos
 if (!store.hasPhotos) {
@@ -37,8 +50,8 @@ async function startAnalysis() {
     await preloadModel()
 
     // Step 1: AI subject segmentation & cutout for each photo
-    for (let i = 0; i < Math.min(store.photos.length, 3); i++) {
-      progressMsg.value = `正在识别主体并裁切 (${i + 1}/${Math.min(store.photos.length, 3)})...`
+    for (let i = 0; i < store.photos.length; i++) {
+      progressMsg.value = `正在识别主体并裁切 (${i + 1}/${store.photos.length})...`
       const result = await generateCutout(store.photos[i].dataUrl)
       cutouts[store.photos[i].id] = result.cutoutUrl
     }
@@ -81,20 +94,39 @@ const papers = [
 async function toggleStroke() {
   strokeEnabled.value = !strokeEnabled.value
   if (strokeEnabled.value) {
-    // Generate stroked versions
     for (const [id, url] of Object.entries(cutouts)) {
-      if (!strokedCutouts[id]) {
-        const result = await applyStroke(url, strokeColor.value, strokeLevel.value)
-        strokedCutouts[id] = result.url
-        strokePx.value = result.pixelWidth
+      // Magazine/poetic: stroked cutout (transparent bg)
+      const r1 = await applyStroke(url, strokeColor.value, strokeLevel.value)
+      strokedCutouts[id] = r1.url
+      strokePx.value = r1.pixelWidth
+
+      // Grid/collage/diary: original + stroke overlay
+      const photo = store.photos.find(p => p.id === id)
+      if (photo) {
+        const r2 = await compositeStrokeOnOriginal(
+          photo.dataUrl, url, strokeColor.value, strokeLevel.value
+        )
+        strokedOriginals[id] = r2.url
       }
     }
   }
 }
 
+function clearStrokeCache() {
+  Object.keys(strokedCutouts).forEach(k => delete strokedCutouts[k])
+  Object.keys(strokedOriginals).forEach(k => delete strokedOriginals[k])
+}
+
+async function copyCaption() {
+  if (store.analysis?.caption) {
+    await navigator.clipboard.writeText(store.analysis.caption)
+    alert('配文已复制')
+  }
+}
+
 function saveJournal() {
   store.saveToHistory()
-  setMsg('已保存到历史')
+  alert('已保存到历史')
 }
 
 function goBack() {
@@ -178,13 +210,9 @@ function goBack() {
             ></textarea>
           </div>
 
-          <div class="result-block caption-block editable-block" v-if="store.analysis">
-            <div class="result-label">配文</div>
-            <textarea
-              v-model="store.analysis.caption"
-              class="edit-textarea serif caption-area"
-              rows="3"
-            ></textarea>
+          <div class="result-block caption-block" v-if="store.analysis?.caption">
+            <div class="result-label">AI 配文 · 点击复制</div>
+            <p class="caption-text serif" @click="copyCaption">{{ store.analysis.caption }}</p>
           </div>
         </div>
       </template>
@@ -235,9 +263,9 @@ function goBack() {
             type="color"
             v-model="strokeColor"
             class="stroke-color"
-            @change="Object.keys(strokedCutouts).forEach(k => delete strokedCutouts[k]); strokeEnabled = false; toggleStroke()"
+            @change="clearStrokeCache(); strokeEnabled = false; toggleStroke()"
           />
-          <select v-model.number="strokeLevel" class="stroke-width" @change="Object.keys(strokedCutouts).forEach(k => delete strokedCutouts[k]); strokeEnabled = false; toggleStroke()">
+          <select v-model.number="strokeLevel" class="stroke-width" @change="clearStrokeCache(); strokeEnabled = false; toggleStroke()">
             <option :value="1">细</option>
             <option :value="2">中</option>
             <option :value="3">粗</option>
@@ -256,6 +284,8 @@ function goBack() {
           :template-id="store.selectedTemplate"
           :paper-bg="selectedPaper"
           :cutouts="displayCutouts"
+          :stroke-enabled="strokeEnabled"
+          :stroke-color="strokeColor"
         />
       </div>
 
@@ -460,6 +490,14 @@ function goBack() {
   color: var(--text-main);
   line-height: 2;
   letter-spacing: 0.05em;
+  white-space: pre-line;
+  cursor: pointer;
+  user-select: text;
+}
+
+.caption-text:hover {
+  background: rgba(196,77,52,0.04);
+  border-radius: 2px;
 }
 
 /* ── Editable textareas ── */

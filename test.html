@@ -1,0 +1,11 @@
+<!doctype html>
+<html><head><meta charset="UTF-8"><title>Test</title></head><body>
+<div id="app"><h1 style="color:red">HTML OK — Vue NOT loaded</h1></div>
+<script type="module">
+import { createApp, h } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.js'
+const app = createApp({
+  render() { return h('h1', { style: 'color:green' }, 'Vue OK!') }
+})
+app.mount('#app')
+</script>
+</body></html>

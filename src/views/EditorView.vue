@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useAppStore } from '@/stores/app'
 import { useJournalStore } from '@/stores/journal'
 import { extractColors } from '@/services/color'
 import { analyzePhotos } from '@/services/ai'
 import { generateCutout, preloadModel, applyStroke, compositeStrokeOnOriginal } from '@/services/imageProcessing'
 import JournalPage from '@/components/JournalPage.vue'
+import { toPng } from 'html-to-image'
 
-const router = useRouter()
+const app = useAppStore()
 const store = useJournalStore()
 const isProcessing = ref(false)
 const progressMsg = ref('')
@@ -19,6 +20,9 @@ const strokeEnabled = ref(false)
 const strokeColor = ref('#2c2420')
 const strokeLevel = ref(2)
 const strokePx = ref(0)
+const previewRef = ref<InstanceType<typeof JournalPage>>()
+const isExporting = ref(false)
+const exportFormat = ref<'xiaohongshu'|'instagram'|'story'|'original'>('xiaohongshu')
 
 // Cutout templates (magazine/poetic) use stroked cutout; others use stroked original
 const isCutoutTemplate = computed(() =>
@@ -35,10 +39,10 @@ const displayCutouts = computed(() => {
   return {}  // empty → JournalPage falls back to photo.dataUrl (original)
 })
 
-// Redirect if no photos
-if (!store.hasPhotos) {
-  router.replace('/')
-}
+// Redirect if no photos (deferred to avoid setup errors)
+onMounted(() => {
+  if (!store.hasPhotos) app.navigate('home')
+})
 
 async function startAnalysis() {
   if (store.photos.length === 0) return
@@ -124,14 +128,53 @@ async function copyCaption() {
   }
 }
 
-function saveJournal() {
-  store.saveToHistory()
-  alert('已保存到历史')
+const exportPresets = {
+  xiaohongshu: { label: '小红书', ratio: 3/4, width: 1080, desc: '1080×1440' },
+  instagram:   { label: 'Instagram', ratio: 1, width: 1080, desc: '1080×1080' },
+  story:       { label: '故事/竖版', ratio: 9/16, width: 1080, desc: '1080×1920' },
+  original:    { label: '原图比例', ratio: 0, width: 1440, desc: '自适应' },
+}
+
+async function exportImage() {
+  const el = (previewRef.value as any)?.$el
+  if (!el) return
+
+  isExporting.value = true
+  try {
+    const preset = exportPresets[exportFormat.value]
+    const containerW = el.offsetWidth
+    const containerH = el.offsetHeight
+    const aspectRatio = preset.ratio > 0 ? preset.ratio : (containerH / containerW)
+    const width = preset.width
+    const height = Math.round(width * aspectRatio)
+    const pixelRatio = width / containerW
+
+    const dataUrl = await toPng(el, {
+      canvasWidth: width,
+      canvasHeight: height,
+      pixelRatio,
+      quality: 1,
+      backgroundColor: el.style.backgroundColor || '#ffffff',
+    })
+
+    // Download
+    const link = document.createElement('a')
+    link.download = `手帖_${preset.label}_${new Date().toISOString().slice(0,10)}.png`
+    link.href = dataUrl
+    link.click()
+
+    store.saveToHistory()
+  } catch (err) {
+    console.error('Export failed:', err)
+    alert('导出失败，请重试')
+  } finally {
+    isExporting.value = false
+  }
 }
 
 function goBack() {
   store.clearPhotos()
-  router.push('/')
+  app.navigate('home')
 }
 </script>
 
@@ -278,6 +321,7 @@ function goBack() {
       <!-- Journal Page -->
       <div class="preview-container">
         <JournalPage
+          ref="previewRef"
           :photos="store.photos"
           :analysis="store.analysis"
           :palette="store.palette"
@@ -289,10 +333,22 @@ function goBack() {
         />
       </div>
 
-      <!-- Export button -->
-      <div class="preview-actions">
-        <button class="btn-export" @click="saveJournal">
-          保存手帖
+      <!-- Export Section -->
+      <div class="export-section">
+        <div class="export-formats">
+          <button
+            v-for="(p, key) in exportPresets"
+            :key="key"
+            class="fmt-btn"
+            :class="{ active: exportFormat === key }"
+            @click="exportFormat = key as any"
+          >
+            <span class="fmt-label">{{ p.label }}</span>
+            <span class="fmt-size">{{ p.desc }}</span>
+          </button>
+        </div>
+        <button class="btn-export" @click="exportImage" :disabled="isExporting">
+          {{ isExporting ? '导出中...' : '导出并下载' }}
         </button>
       </div>
     </div>
@@ -301,10 +357,12 @@ function goBack() {
 
 <style scoped>
 .editor {
+  width: 100%;
   max-width: 480px;
   margin: 0 auto;
   min-height: 100vh;
   min-height: 100dvh;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -671,6 +729,57 @@ function goBack() {
   text-align: center;
   padding: var(--space-md) 0;
 }
+
+/* ── Export Section ── */
+.export-section {
+  padding: var(--space-md) 0 var(--space-xl);
+}
+
+.export-formats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: var(--space-md);
+}
+
+.fmt-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 8px;
+  border: 2px solid var(--border-hairline);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.fmt-btn.active {
+  border-color: var(--text-main);
+  background: rgba(0,0,0,0.03);
+}
+
+.fmt-label {
+  font-size: 13px;
+  color: var(--text-main);
+  font-weight: 500;
+  font-family: var(--font-serif);
+  letter-spacing: 0.05em;
+}
+
+.fmt-size {
+  font-size: 10px;
+  color: var(--text-light);
+}
+
+.btn-export:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.btn-export-old { display: none; }
 
 .btn-export {
   padding: 10px 28px;

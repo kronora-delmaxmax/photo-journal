@@ -1,52 +1,44 @@
 // ═══════════════ AI SUBJECT SEGMENTATION ═══════════════
 // Uses @imgly/background-removal (ONNX + WASM, runs in browser)
-// Automatically detects subject (person/animal/object) and removes background
-
-import { removeBackground, preload } from '@imgly/background-removal'
+// Lazily loaded to avoid crashing the app if WASM fails
 
 export interface ProcessedImage {
-  cutoutUrl: string       // subject with transparent background
-  originalUrl: string     // original image
+  cutoutUrl: string
+  originalUrl: string
 }
 
-// ── Config ──
+let bgRemovalModule: any = null
+
+async function getBgRemoval() {
+  if (!bgRemovalModule) {
+    bgRemovalModule = await import('@imgly/background-removal')
+  }
+  return bgRemovalModule
+}
+
 const SEGMENT_CONFIG = {
   model: 'isnet_quint8' as const,
-  output: {
-    format: 'image/png' as const,
-    quality: 1,
-  },
+  output: { format: 'image/png' as const, quality: 1 },
 }
-
-// Preload the AI model (call this early, before first segmentation)
-let preloadPromise: Promise<void> | null = null
 
 export async function preloadModel(): Promise<void> {
-  if (!preloadPromise) {
-    preloadPromise = preload(SEGMENT_CONFIG).catch(err => {
-      console.error('Model preload failed:', err)
-      preloadPromise = null
-    })
+  try {
+    const m = await getBgRemoval()
+    await m.preload(SEGMENT_CONFIG)
+  } catch (err) {
+    console.error('Model preload failed:', err)
   }
-  return preloadPromise
 }
 
-// ═══════════════ MAIN API ═══════════════
 export async function generateCutout(dataUrl: string): Promise<ProcessedImage> {
   try {
-    // Convert dataURL to Blob for the API
+    const m = await getBgRemoval()
     const blob = await (await fetch(dataUrl)).blob()
-
-    // Run AI segmentation
-    const resultBlob = await removeBackground(blob, SEGMENT_CONFIG)
-
-    // Convert result back to data URL
+    const resultBlob = await m.removeBackground(blob, SEGMENT_CONFIG)
     const cutoutUrl = await blobToDataURL(resultBlob)
-
     return { cutoutUrl, originalUrl: dataUrl }
   } catch (err) {
     console.error('AI segmentation failed, using original:', err)
-    // Fallback: return original image
     return { cutoutUrl: dataUrl, originalUrl: dataUrl }
   }
 }

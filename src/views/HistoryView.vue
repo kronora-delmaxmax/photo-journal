@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
+import { useAppStore } from '@/stores/app'
 import { useJournalStore } from '@/stores/journal'
 
-const router = useRouter()
+const app = useAppStore()
 const store = useJournalStore()
 </script>
 
 <template>
   <div class="history">
     <header class="history-header">
-      <button class="back-btn" @click="router.push('/')">
+      <button class="back-btn" @click="app.navigate('home')">
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
           <path d="M12 4L6 10L12 16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
@@ -31,7 +31,7 @@ const store = useJournalStore()
           </div>
           <p class="empty-title serif">还没有手帖</p>
           <p class="empty-desc">选择照片，创建你的第一份手帖吧。</p>
-          <button class="btn-start" @click="router.push('/')">
+          <button class="btn-start" @click="app.navigate('home')">
             开始 →
           </button>
         </div>

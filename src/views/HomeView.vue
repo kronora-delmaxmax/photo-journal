@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
+import { useAppStore } from '@/stores/app'
 import { useJournalStore } from '@/stores/journal'
 import PhotoUploader from '@/components/PhotoUploader.vue'
 import type { JournalPhoto } from '@/stores/journal'
 
-const router = useRouter()
+const app = useAppStore()
 const store = useJournalStore()
 
 function onPhotosSelected(newPhotos: JournalPhoto[]) {
@@ -13,7 +13,7 @@ function onPhotosSelected(newPhotos: JournalPhoto[]) {
 
 function goToEditor() {
   if (store.hasPhotos) {
-    router.push('/editor')
+    app.navigate('editor')
   }
 }
 
@@ -68,9 +68,9 @@ function startFromScratch() {
 
     <!-- Footer -->
     <footer class="home-footer">
-      <router-link to="/history" class="footer-link">
+      <button class="footer-link" @click="app.navigate('history')">
         历史手帖 →
-      </router-link>
+      </button>
     </footer>
   </div>
 </template>
@@ -86,6 +86,7 @@ const hints = [
 
 <style scoped>
 .home {
+  width: 100%;
   max-width: 480px;
   margin: 0 auto;
   padding: var(--space-3xl) var(--space-lg) var(--space-xl);
@@ -93,6 +94,12 @@ const hints = [
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
+  overflow-x: hidden;
+}
+
+@media (max-width: 380px) {
+  .hero-title { font-size: 36px; }
+  .hero-sub { font-size: 13px; }
 }
 
 /* ── Hero ── */

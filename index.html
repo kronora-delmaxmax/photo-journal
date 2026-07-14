@@ -10,6 +10,19 @@
   </head>
   <body>
     <div id="app"></div>
+    <div id="errors" style="position:fixed;bottom:0;left:0;right:0;background:#ffebee;color:#b71c1c;padding:12px;font-size:12px;display:none;z-index:9999;max-height:200px;overflow:auto"></div>
+    <script>
+      window.onerror = function(msg, url, line, col, err) {
+        var el = document.getElementById('errors');
+        el.style.display = 'block';
+        el.innerHTML += '<div><b>Error:</b> ' + msg + '<br><small>' + url + ':' + line + '</small></div>';
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        var el = document.getElementById('errors');
+        el.style.display = 'block';
+        el.innerHTML += '<div><b>Promise Error:</b> ' + e.reason + '</div>';
+      });
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

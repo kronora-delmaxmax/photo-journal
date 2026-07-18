@@ -18,15 +18,16 @@ export const EXPORT_PRESETS: Record<string, ExportPreset> = {
 }
 
 export const TEMPLATES = [
-  { id: 'magazine', label: '杂志封面', maxPhotos: 4 },
-  { id: 'grid', label: '干净网格', maxPhotos: 4 },
-  { id: 'poetic', label: '诗意留白', maxPhotos: 3 },
-  { id: 'collage', label: '拼贴手帐', maxPhotos: 5 },
-  { id: 'diary', label: '拍立得日记', maxPhotos: 3 },
-  { id: 'minimal', label: '极简', maxPhotos: 1 },
-  { id: 'editorial', label: '杂志报道', maxPhotos: 3 },
-  { id: 'bleed', label: '满版', maxPhotos: 1 },
-  { id: 'popeye', label: 'POPEYE', maxPhotos: 1 },
+  { id: 'magazine', label: '杂志封面', maxPhotos: 4, desc: '大图+缩略图，经典杂志封面布局' },
+  { id: 'grid', label: '干净网格', maxPhotos: 4, desc: '2×2整齐网格，利落清爽' },
+  { id: 'poetic', label: '诗意留白', maxPhotos: 3, desc: '大图主导，诗意文字排列' },
+  { id: 'collage', label: '拼贴手帐', maxPhotos: 5, desc: '旋转叠放+胶带贴纸，手帐感' },
+  { id: 'diary', label: '拍立得日记', maxPhotos: 3, desc: '拍立得相纸+手写文字' },
+  { id: 'minimal', label: '极简', maxPhotos: 1, desc: '一大图一文，不对称边距呼吸感' },
+  { id: 'editorial', label: '杂志报道', maxPhotos: 3, desc: '大图+侧栏缩略图+内容区' },
+  { id: 'bleed', label: '满版', maxPhotos: 1, desc: '照片满版出血，文字叠印' },
+  { id: 'popeye', label: 'POPEYE', maxPhotos: 1, desc: '一文一图，18%底部呼吸空间' },
+  { id: 'reverse', label: '上下反转', maxPhotos: 1, desc: '文字在上照片在下，POPEYE变异' },
 ] as const
 
 export const PAPERS: Record<string, { label: string; color: string }> = {

@@ -23,6 +23,19 @@ const strokePx = ref(0)
 const isExporting = ref(false)
 const workspaceCanvasRef = ref<InstanceType<typeof InteractiveCanvas> | null>(null)
 const exportFormat = ref<'xiaohongshu'|'instagram'|'story'>(store.exportFormat as any || 'xiaohongshu')
+const selectedPhotoIndex = ref(0)
+
+// ── Undo stack for photo positions ──
+const MAX_UNDO = 30
+const undoStack = ref<Record<string, { x: number; y: number; scale: number }>[]>([])
+function pushUndo() {
+  undoStack.value.push({ ...store.photoPositions })
+  if (undoStack.value.length > MAX_UNDO) undoStack.value.shift()
+}
+function undo() {
+  const prev = undoStack.value.pop()
+  if (prev) store.photoPositions = { ...prev }
+}
 
 const isCutoutTemplate = computed(() =>
   store.selectedTemplate === 'magazine' || store.selectedTemplate === 'poetic'
@@ -137,7 +150,9 @@ function goBack() {
     </header>
 
     <div class="photo-strip">
-      <div v-for="photo in store.photos" :key="photo.id" class="strip-thumb">
+      <div v-for="(photo, i) in store.photos" :key="photo.id"
+        class="strip-thumb" :class="{ active: i === selectedPhotoIndex }"
+        @click="selectedPhotoIndex = i">
         <img :src="photo.dataUrl" alt="" />
       </div>
     </div>
@@ -198,7 +213,7 @@ function goBack() {
           class="tpl-tab"
           :class="{ active: store.selectedTemplate === tpl.id, overflow: store.photoCount > tpl.maxPhotos }"
           @click="store.setTemplate(tpl.id)"
-          :title="store.photoCount > tpl.maxPhotos ? `当前${store.photoCount}张，该模板最多显示${tpl.maxPhotos}张` : `最多${tpl.maxPhotos}张`">
+          :title="(store.photoCount > tpl.maxPhotos ? `⚠️ 当前${store.photoCount}张，最多${tpl.maxPhotos}张 · ` : '') + tpl.desc">
           {{ tpl.label }}
           <span class="tpl-count">{{ tpl.maxPhotos }}</span>
           <span v-if="store.photoCount > tpl.maxPhotos" class="tpl-warn">!</span>
@@ -244,11 +259,14 @@ function goBack() {
           :workspace-height="workspaceSize.height"
           :stroke-enabled="strokeEnabled"
           :stroke-color="strokeColor"
-          @update-position="(id, x, y, scale) => store.setPhotoPosition(id, x, y, scale)"
+          @update-position="(id, x, y, scale) => { pushUndo(); store.setPhotoPosition(id, x, y, scale) }"
         />
       </div>
 
       <div class="export-section">
+        <button class="btn-undo" v-if="undoStack.length > 0" @click="undo" title="撤销拖动">
+          ↩ 撤销 ({{ undoStack.length }})
+        </button>
         <button class="btn-export" @click="exportImage" :disabled="isExporting">
           {{ isExporting ? '导出中...' : '导出并下载' }}
         </button>
@@ -265,7 +283,8 @@ function goBack() {
 .header-spacer { width: 28px; }
 .photo-strip { display: flex; gap: 4px; padding: var(--space-sm) var(--space-lg); overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .photo-strip::-webkit-scrollbar { display: none; }
-.strip-thumb { width: 56px; height: 56px; border-radius: 2px; overflow: hidden; flex-shrink: 0; }
+.strip-thumb { width: 56px; height: 56px; border-radius: 2px; overflow: hidden; flex-shrink: 0; border: 2px solid transparent; transition: border-color 0.2s; cursor: pointer; }
+.strip-thumb.active { border-color: var(--text-main); }
 .strip-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .editor-main { flex: 1; padding: var(--space-lg); }
 .analysis-prompt { text-align: center; padding: var(--space-2xl) 0; }
@@ -315,4 +334,6 @@ function goBack() {
 .export-section { padding: var(--space-md) 0 var(--space-xl); }
 .btn-export { padding: 10px 28px; background: var(--text-main); color: var(--bg-cream); font-family: var(--font-serif); font-size: 13px; letter-spacing: 0.08em; border-radius: 2px; border: none; cursor: pointer; transition: all 0.2s; }
 .btn-export:disabled { opacity: 0.5; pointer-events: none; }
+.btn-undo { padding: 6px 14px; margin-right: 8px; background: transparent; color: var(--text-muted); font-family: var(--font-serif); font-size: 11px; letter-spacing: 0.05em; border: 1px solid var(--border-hairline); border-radius: 2px; cursor: pointer; transition: all 0.2s; }
+.btn-undo:hover { border-color: var(--text-main); color: var(--text-main); }
 </style>

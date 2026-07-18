@@ -20,13 +20,15 @@ export interface WorkspaceOpts {
   width: number
   height: number
   positions: Record<string, { x: number; y: number; scale: number }>
+  date?: Date  // record date; falls back to today for new/preview pages
 }
 
 export async function renderWorkspace(
   ctx: CanvasRenderingContext2D,
   opts: WorkspaceOpts
 ): Promise<PhotoBounds[]> {
-  const { width: W, height: H, photos: p, analysis: a, palette: pl, templateId: tpl, paperBg, cutouts, positions } = opts
+  const { width: W, height: H, photos: p, analysis: a, palette: pl, templateId: tpl, paperBg, cutouts, positions, date } = opts
+  const recordDate = date || new Date()
 
   ctx.clearRect(0, 0, W, H)
 
@@ -43,37 +45,55 @@ export async function renderWorkspace(
   let bounds: PhotoBounds[] = []
 
   if (tpl === 'magazine') {
-    bounds = await drawMagazine(ctx, p, a, pl, cutouts, positions, W, H, pad, gap, serif)
+    bounds = await drawMagazine(ctx, p, a, pl, cutouts, positions, W, H, pad, gap, serif, recordDate)
   } else if (tpl === 'grid') {
-    bounds = await drawGridTpl(ctx, p, a, pl, cutouts, positions, W, H, pad, gap, serif)
+    bounds = await drawGridTpl(ctx, p, a, pl, cutouts, positions, W, H, pad, gap, serif, recordDate)
   } else if (tpl === 'poetic') {
-    bounds = await drawPoetic(ctx, p, a, pl, cutouts, positions, W, H, pad, serif)
+    bounds = await drawPoetic(ctx, p, a, pl, cutouts, positions, W, H, pad, serif, recordDate)
   } else if (tpl === 'collage') {
-    bounds = await drawCollage(ctx, p, a, pl, cutouts, positions, W, H, pad, serif)
+    bounds = await drawCollage(ctx, p, a, pl, cutouts, positions, W, H, pad, serif, recordDate)
   } else if (tpl === 'minimal') {
-    bounds = await drawMinimal(ctx, p, a, pl, cutouts, positions, W, H, pad, gap, serif)
+    bounds = await drawMinimal(ctx, p, a, pl, cutouts, positions, W, H, pad, gap, serif, recordDate)
   } else if (tpl === 'editorial') {
-    bounds = await drawEditorial(ctx, p, a, pl, cutouts, positions, W, H, pad, gap, serif)
+    bounds = await drawEditorial(ctx, p, a, pl, cutouts, positions, W, H, pad, gap, serif, recordDate)
   } else if (tpl === 'bleed') {
-    bounds = await drawBleed(ctx, p, a, pl, cutouts, positions, W, H, pad, serif)
+    bounds = await drawBleed(ctx, p, a, pl, cutouts, positions, W, H, pad, serif, recordDate)
   } else if (tpl === 'popeye') {
-    bounds = await drawPopeye(ctx, p, a, pl, cutouts, positions, W, H, pad, gap, serif)
+    bounds = await drawPopeye(ctx, p, a, pl, cutouts, positions, W, H, pad, gap, serif, recordDate)
+  } else if (tpl === 'reverse') {
+    bounds = await drawReverse(ctx, p, a, pl, cutouts, positions, W, H, pad, serif, recordDate)
   } else {
-    bounds = await drawDiary(ctx, p, a, pl, cutouts, positions, W, H, pad, serif)
+    bounds = await drawDiary(ctx, p, a, pl, cutouts, positions, W, H, pad, serif, recordDate)
   }
 
   return bounds
 }
 
-// ═══════════════ IMAGE CACHE ═══════════════
+// ═══════════════ IMAGE CACHE (LRU, max 30) ═══════════════
+const MAX_CACHE = 30
 const imgCache = new Map<string, HTMLImageElement>()
+const imgCacheOrder: string[] = []
 
 function loadImg(src: string): Promise<HTMLImageElement> {
   const cached = imgCache.get(src)
-  if (cached) return Promise.resolve(cached)
+  if (cached) {
+    // Move to end (most recently used)
+    const idx = imgCacheOrder.indexOf(src)
+    if (idx > -1) { imgCacheOrder.splice(idx, 1); imgCacheOrder.push(src) }
+    return Promise.resolve(cached)
+  }
   return new Promise((resolve, reject) => {
     const img = new Image()
-    img.onload = () => { imgCache.set(src, img); resolve(img) }
+    img.onload = () => {
+      imgCache.set(src, img)
+      imgCacheOrder.push(src)
+      // Evict oldest when over capacity
+      while (imgCacheOrder.length > MAX_CACHE) {
+        const old = imgCacheOrder.shift()!
+        imgCache.delete(old)
+      }
+      resolve(img)
+    }
     img.onerror = () => reject(new Error('img load failed'))
     img.src = src
   })
@@ -85,43 +105,105 @@ async function drawMagazine(
   ctx: CanvasRenderingContext2D, p: JournalPhoto[], a: PhotoAnalysis | null,
   pl: ColorPalette, cutouts: Record<string, string>,
   positions: Record<string, { x: number; y: number; scale: number }>,
-  W: number, H: number, pad: number, gap: number, serif: string
+  W: number, H: number, _pad: number, gap: number, serif: string, date: Date
 ): Promise<PhotoBounds[]> {
   const bounds: PhotoBounds[] = []
   if (!p[0]) return bounds
-  const heroH = Math.round(H * 0.56)
+
+  const sans = "'Noto Sans SC', 'PingFang SC', sans-serif"
+  const ml = Math.round(W * 0.075)
+  const mr = Math.round(W * 0.055)
+  const mt = Math.round(H * 0.05)
+  const contentW = W - ml - mr
+
+  // ── Hero photo: full content width, ~54%H ──
+  const heroH = Math.round(H * 0.54)
+  const heroW = contentW
+  const heroX = ml
+
   const heroPos = positions[p[0].id] || { x: 50, y: 50, scale: 1 }
-  const heroBounds = await drawCover(ctx, cutouts[p[0].id] || p[0].dataUrl, 0, 0, W, heroH, heroPos.x, heroPos.y, heroPos.scale)
+  const heroBounds = await drawCover(ctx, cutouts[p[0].id] || p[0].dataUrl, heroX, mt, heroW, heroH, heroPos.x, heroPos.y, heroPos.scale)
   bounds.push({ id: p[0].id, ...heroBounds })
-  const grad = ctx.createLinearGradient(0, heroH * 0.7, 0, heroH)
-  grad.addColorStop(0, 'transparent'); grad.addColorStop(1, 'rgba(0,0,0,0.45)')
-  ctx.fillStyle = grad; ctx.fillRect(0, heroH * 0.7, W, heroH * 0.3)
-  const d = fmtDate()
-  ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = `${Math.round(W*0.022)}px ${serif}`; ctx.textAlign = 'left'
-  ctx.fillText(d, pad, heroH - Math.round(H*0.04))
-  if (a?.mood) {
-    ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.round(W*0.045)}px ${serif}`
-    ctx.fillText(a.mood, pad * 1.5, heroH - Math.round(H*0.015))
-  }
+
+  // ── Subtle bottom gradient on hero (fade to paper) ──
+  const grad = ctx.createLinearGradient(0, mt + heroH * 0.75, 0, mt + heroH)
+  grad.addColorStop(0, 'transparent'); grad.addColorStop(1, 'rgba(0,0,0,0.2)')
+  ctx.fillStyle = grad; ctx.fillRect(heroX, mt + heroH * 0.75, heroW, heroH * 0.25)
+
+  // ── Thumbnail strip: 1-3 small photos, right-aligned below hero ──
+  const thumbY = mt + heroH + gap
   const smallCount = Math.min(p.length - 1, 3)
+  let thumbBottom = thumbY
   if (smallCount > 0) {
-    const sw = Math.round((W - pad*2 - gap*(smallCount-1)) / smallCount)
-    const sh = Math.round(H * 0.16)
-    const sy = heroH + Math.round(H * 0.02)
+    const tw = Math.round(contentW * 0.21)
+    const th = Math.round(tw * 0.72)
     for (let i = 0; i < smallCount; i++) {
-      const sx = pad + i*(sw+gap)
-      const pos = positions[p[i+1].id] || { x: 50, y: 50, scale: 1 }
-      const b = await drawCover(ctx, cutouts[p[i+1].id] || p[i+1].dataUrl, sx, sy, sw, sh, pos.x, pos.y, pos.scale)
-      bounds.push({ id: p[i+1].id, ...b })
+      const tx = W - mr - (smallCount - i) * (tw + gap)
+      const pos = positions[p[i + 1].id] || { x: 50, y: 50, scale: 1 }
+      const b = await drawCover(ctx, cutouts[p[i + 1].id] || p[i + 1].dataUrl, tx, thumbY, tw, th, pos.x, pos.y, pos.scale)
+      bounds.push({ id: p[i + 1].id, ...b })
+    }
+    thumbBottom = thumbY + th
+  }
+
+  // ── Text zone: POPEYE hierarchy below thumbnails ──
+  const textStartY = thumbBottom + Math.round(H * 0.035)
+  const tx = ml
+  const labelSize = Math.round(W * 0.02)
+  const titleSize = Math.round(W * 0.045)
+  const capSize = Math.round(W * 0.026)
+  const labelLH = Math.round(labelSize * 1.4)
+  const titleLH = Math.round(titleSize * 1.2)
+  const capLH = Math.round(capSize * 1.5)
+  const smGap = Math.round(H * 0.012)
+
+  let cy = textStartY
+
+  // ① Date
+  ctx.fillStyle = '#9a8e82'
+  ctx.font = `${labelSize}px ${sans}`
+  ctx.textAlign = 'left'
+  ctx.fillText(fmtDate(date), tx, cy + labelLH)
+  cy += labelLH + smGap
+
+  // ② Accent bar
+  const barW = Math.round(W * 0.035)
+  const barH = Math.max(3, Math.round(H * 0.0035))
+  ctx.fillStyle = pl.primary
+  ctx.fillRect(tx, cy, barW, barH)
+  cy += barH + Math.round(H * 0.028)
+
+  // ③ Mood
+  if (a?.mood) {
+    ctx.fillStyle = '#1a1512'
+    ctx.font = `bold ${titleSize}px ${serif}`
+    ctx.textAlign = 'left'
+    ctx.fillText(a.mood, tx, cy + titleLH)
+    cy += titleLH + Math.round(H * 0.016)
+  }
+
+  // ④ Style tag
+  if (a?.style) {
+    ctx.fillStyle = pl.secondary || '#4a7c8c'
+    ctx.font = `${labelSize}px ${sans}`
+    ctx.textAlign = 'left'
+    ctx.fillText(`# ${a.style}`, tx, cy + labelLH)
+    cy += labelLH + smGap
+  }
+
+  // ⑤ Caption
+  if (a?.caption) {
+    ctx.fillStyle = '#4a4038'
+    ctx.font = `${capSize}px ${serif}`
+    ctx.textAlign = 'left'
+    const textMaxW = contentW
+    const lines = nakiwakare(a.caption.split('\n')).slice(0, 3).flatMap(l => wrapLines(ctx, l, textMaxW))
+    for (const line of lines) {
+      ctx.fillText(line, tx, cy + capLH)
+      cy += capLH
     }
   }
-  const cy = heroH + (smallCount > 0 ? Math.round(H * 0.2) : Math.round(H * 0.04))
-  if (a?.caption) {
-    ctx.fillStyle = pl.primary; ctx.fillRect(W/2 - Math.round(W*0.015), cy, Math.round(W*0.03), Math.round(H*0.003))
-    ctx.fillStyle = '#2c2420'; ctx.font = `${Math.round(W*0.032)}px ${serif}`; ctx.textAlign = 'center'
-    const lines = nakiwakare(a.caption.split('\n'))
-    lines.forEach((l, i) => ctx.fillText(l, W/2, cy + Math.round(H*0.04) + i*Math.round(H*0.04)))
-  }
+
   return bounds
 }
 
@@ -129,11 +211,11 @@ async function drawGridTpl(
   ctx: CanvasRenderingContext2D, p: JournalPhoto[], a: PhotoAnalysis | null,
   pl: ColorPalette, cutouts: Record<string, string>,
   positions: Record<string, { x: number; y: number; scale: number }>,
-  W: number, H: number, pad: number, gap: number, serif: string
+  W: number, H: number, pad: number, gap: number, serif: string, date: Date
 ): Promise<PhotoBounds[]> {
   const bounds: PhotoBounds[] = []
   ctx.fillStyle = '#8c8078'; ctx.font = `${Math.round(W*0.025)}px ${serif}`; ctx.textAlign = 'left'
-  ctx.fillText(fmtDate(), pad, Math.round(H*0.06))
+  ctx.fillText(fmtDate(date), pad, Math.round(H*0.06))
   if (a?.style) {
     ctx.fillStyle = pl.primary; ctx.font = `bold ${Math.round(W*0.028)}px ${serif}`; ctx.textAlign = 'right'
     ctx.fillText(a.style, W - pad, Math.round(H*0.06))
@@ -154,8 +236,9 @@ async function drawGridTpl(
   const ty = gridTop + 2*(gh+gap) + Math.round(H*0.03)
   if (a?.caption) {
     ctx.fillStyle = '#2c2420'; ctx.font = `${Math.round(W*0.03)}px ${serif}`; ctx.textAlign = 'left'
-    const lines = a.caption.split('\n')
-    nakiwakare(lines).forEach((l, i) => ctx.fillText(l, pad, ty + i*Math.round(H*0.035)))
+    const maxW = W - pad * 2
+    const lines = nakiwakare(a.caption.split('\n')).flatMap(l => wrapLines(ctx, l, maxW))
+    lines.forEach((l, i) => ctx.fillText(l, pad, ty + i*Math.round(H*0.035)))
   }
   return bounds
 }
@@ -164,7 +247,7 @@ async function drawPoetic(
   ctx: CanvasRenderingContext2D, p: JournalPhoto[], a: PhotoAnalysis | null,
   pl: ColorPalette, cutouts: Record<string, string>,
   positions: Record<string, { x: number; y: number; scale: number }>,
-  W: number, H: number, pad: number, serif: string
+  W: number, H: number, pad: number, serif: string, date: Date
 ): Promise<PhotoBounds[]> {
   const bounds: PhotoBounds[] = []
   if (!p[0]) return bounds
@@ -174,11 +257,12 @@ async function drawPoetic(
   bounds.push({ id: p[0].id, ...b })
   const ty = photoH + Math.round(H*0.04)
   ctx.fillStyle = '#8c8078'; ctx.font = `${Math.round(W*0.024)}px ${serif}`; ctx.textAlign = 'left'
-  ctx.fillText(fmtDate(), pad, ty)
+  ctx.fillText(fmtDate(date), pad, ty)
   ctx.fillStyle = pl.primary; ctx.fillRect(pad, ty + Math.round(H*0.015), Math.round(W*0.03), Math.round(H*0.002))
   if (a?.caption) {
     ctx.fillStyle = '#2c2420'; ctx.font = `${Math.round(W*0.04)}px ${serif}`
-    const lines = nakiwakare(a.caption.split('\n'))
+    const maxW = W - pad * 2
+    const lines = nakiwakare(a.caption.split('\n')).flatMap(l => wrapLines(ctx, l, maxW))
     lines.forEach((l, i) => ctx.fillText(l, pad, ty + Math.round(H*0.05) + i*Math.round(H*0.045)))
   }
   if (p.length > 1) {
@@ -198,7 +282,7 @@ async function drawCollage(
   ctx: CanvasRenderingContext2D, p: JournalPhoto[], a: PhotoAnalysis | null,
   pl: ColorPalette, cutouts: Record<string, string>,
   positions: Record<string, { x: number; y: number; scale: number }>,
-  W: number, H: number, pad: number, serif: string
+  W: number, H: number, pad: number, serif: string, date: Date
 ): Promise<PhotoBounds[]> {
   const bounds: PhotoBounds[] = []
   const cw = Math.round(W - pad * 2)
@@ -243,14 +327,15 @@ async function drawCollage(
   const sans = "'Noto Sans SC', 'PingFang SC', sans-serif"
   // Date + accent bar (top of text zone)
   ctx.fillStyle = '#9a8e82'; ctx.font = `${Math.round(W*0.02)}px ${sans}`; ctx.textAlign = 'left'
-  ctx.fillText(fmtDate(), pad, ty)
+  ctx.fillText(fmtDate(date), pad, ty)
   const barW = Math.round(W * 0.03); const barH = Math.max(2, Math.round(H * 0.003))
   ctx.fillStyle = pl.primary; ctx.fillRect(pad, ty + Math.round(H*0.018), barW, barH)
   // Caption
   const capY = ty + barH + Math.round(H * 0.03)
   if (a?.caption) {
     ctx.fillStyle = '#2c2420'; ctx.font = `${Math.round(W * 0.035)}px ${serif}`; ctx.textAlign = 'center'
-    const lines = nakiwakare(a.caption.split('\n'))
+    const maxW = W - pad * 2
+    const lines = nakiwakare(a.caption.split('\n')).flatMap(l => wrapLines(ctx, l, maxW))
     lines.forEach((l, i) => ctx.fillText(l, W / 2, capY + i * Math.round(H * 0.04)))
   }
   return bounds
@@ -260,11 +345,11 @@ async function drawDiary(
   ctx: CanvasRenderingContext2D, p: JournalPhoto[], a: PhotoAnalysis | null,
   pl: ColorPalette, cutouts: Record<string, string>,
   positions: Record<string, { x: number; y: number; scale: number }>,
-  W: number, H: number, pad: number, serif: string
+  W: number, H: number, pad: number, serif: string, date: Date
 ): Promise<PhotoBounds[]> {
   const bounds: PhotoBounds[] = []
   ctx.fillStyle = '#2c2420'; ctx.font = `bold ${Math.round(W*0.04)}px ${serif}`; ctx.textAlign = 'left'
-  ctx.fillText(fmtDate(), pad, Math.round(H*0.07))
+  ctx.fillText(fmtDate(date), pad, Math.round(H*0.07))
   ctx.fillStyle = pl.primary; ctx.font = `${Math.round(W*0.026)}px ${serif}`; ctx.textAlign = 'right'
   ctx.fillText(a?.mood || '记录', W - pad, Math.round(H*0.07))
   ctx.strokeStyle = '#e0d8cc'; ctx.lineWidth = 1
@@ -312,7 +397,7 @@ async function drawMinimal(
   ctx: CanvasRenderingContext2D, p: JournalPhoto[], a: PhotoAnalysis | null,
   pl: ColorPalette, cutouts: Record<string, string>,
   positions: Record<string, { x: number; y: number; scale: number }>,
-  W: number, H: number, pad: number, _gap: number, serif: string
+  W: number, H: number, _pad: number, _gap: number, serif: string, date: Date
 ): Promise<PhotoBounds[]> {
   const bounds: PhotoBounds[] = []
   if (!p[0]) return bounds
@@ -355,7 +440,7 @@ async function drawMinimal(
   ctx.fillStyle = '#9a8e82'
   ctx.font = `${labelSize}px ${sans}`
   ctx.textAlign = 'left'
-  ctx.fillText(fmtDate(), tx, cy + labelLH)
+  ctx.fillText(fmtDate(date), tx, cy + labelLH)
   cy += labelLH + smGap
 
   // ② Accent bar — thin color line, POPEYE hallmark
@@ -388,7 +473,8 @@ async function drawMinimal(
     ctx.fillStyle = '#4a4038'
     ctx.font = `${capSize}px ${serif}`
     ctx.textAlign = 'left'
-    const lines = nakiwakare(a.caption.split('\n')).slice(0, 2)
+    const textMaxW = W - ml - mr
+    const lines = nakiwakare(a.caption.split('\n')).slice(0, 2).flatMap(l => wrapLines(ctx, l, textMaxW))
     for (const line of lines) {
       ctx.fillText(line, tx, cy + capLH)
       cy += capLH
@@ -402,7 +488,7 @@ async function drawEditorial(
   ctx: CanvasRenderingContext2D, p: JournalPhoto[], a: PhotoAnalysis | null,
   pl: ColorPalette, cutouts: Record<string, string>,
   positions: Record<string, { x: number; y: number; scale: number }>,
-  W: number, H: number, pad: number, gap: number, serif: string
+  W: number, H: number, _pad: number, gap: number, serif: string, date: Date
 ): Promise<PhotoBounds[]> {
   const bounds: PhotoBounds[] = []
   if (!p[0]) return bounds
@@ -458,7 +544,7 @@ async function drawEditorial(
   ctx.fillStyle = '#9a8e82'
   ctx.font = `${labelSize}px ${sans}`
   ctx.textAlign = 'left'
-  ctx.fillText(fmtDate(), tx, cy + labelLH)
+  ctx.fillText(fmtDate(date), tx, cy + labelLH)
   cy += labelLH + smGap
 
   // ② Accent bar
@@ -491,7 +577,8 @@ async function drawEditorial(
     ctx.fillStyle = '#4a4038'
     ctx.font = `${capSize}px ${serif}`
     ctx.textAlign = 'left'
-    const lines = nakiwakare(a.caption.split('\n')).slice(0, 3)
+    const textMaxW = W - ml - mr
+    const lines = nakiwakare(a.caption.split('\n')).slice(0, 3).flatMap(l => wrapLines(ctx, l, textMaxW))
     for (const line of lines) {
       ctx.fillText(line, tx, cy + capLH)
       cy += capLH
@@ -503,9 +590,9 @@ async function drawEditorial(
 
 async function drawBleed(
   ctx: CanvasRenderingContext2D, p: JournalPhoto[], a: PhotoAnalysis | null,
-  pl: ColorPalette, cutouts: Record<string, string>,
+  _pl: ColorPalette, cutouts: Record<string, string>,
   positions: Record<string, { x: number; y: number; scale: number }>,
-  W: number, H: number, pad: number, serif: string
+  W: number, H: number, _pad: number, serif: string, date: Date
 ): Promise<PhotoBounds[]> {
   const bounds: PhotoBounds[] = []
   if (!p[0]) return bounds
@@ -541,7 +628,8 @@ async function drawBleed(
 
   // Caption — smallest, at the very bottom
   if (a?.caption) {
-    const lines = nakiwakare(a.caption.split('\n')).slice(0, 2)
+    const textW = W - tx * 2
+    const lines = nakiwakare(a.caption.split('\n')).slice(0, 2).flatMap(l => wrapLines(ctx, l, textW))
     ctx.fillStyle = 'rgba(255,255,255,0.75)'
     ctx.font = `${capSize}px ${serif}`
     ctx.textAlign = 'left'
@@ -574,7 +662,131 @@ async function drawBleed(
   ctx.fillStyle = 'rgba(255,255,255,0.6)'
   ctx.font = `${labelSize}px ${sans}`
   ctx.textAlign = 'left'
-  ctx.fillText(fmtDate(), tx, cy)
+  ctx.fillText(fmtDate(date), tx, cy)
+
+  return bounds
+}
+
+// ═══════════════ REVERSE — text on top, photo on bottom ═══════════════
+// POPEYE occasionally inverts the layout (2/36 pages): text zone above, photo below.
+// Same asymmetric margins and breathing room, just flipped vertically.
+
+async function drawReverse(
+  ctx: CanvasRenderingContext2D, p: JournalPhoto[], a: PhotoAnalysis | null,
+  pl: ColorPalette, cutouts: Record<string, string>,
+  positions: Record<string, { x: number; y: number; scale: number }>,
+  W: number, H: number, _pad: number, serif: string, date: Date
+): Promise<PhotoBounds[]> {
+  const bounds: PhotoBounds[] = []
+  if (!p[0]) return bounds
+
+  const sans = "'Noto Sans SC', 'PingFang SC', sans-serif"
+
+  const ml = Math.round(W * 0.085)
+  const mr = Math.round(W * 0.055)
+  const mt = Math.round(H * 0.06)
+  const mb = Math.round(H * 0.16)
+  const contentW = W - ml - mr
+
+  const labelSize = Math.round(W * 0.019)
+  const titleSize = Math.round(W * 0.052)
+  const capSize = Math.round(W * 0.024)
+  const labelLH = Math.round(labelSize * 1.5)
+  const titleLH = Math.round(titleSize * 1.15)
+  const capLH = Math.round(capSize * 1.6)
+  const smGap = Math.round(H * 0.01)
+  const mdGap = Math.round(H * 0.028)
+  const barW = Math.round(W * 0.04)
+  const barH = Math.max(3, Math.round(H * 0.004))
+
+  const tx = ml
+
+  // ── Text zone: top portion ──
+  const textMaxW = Math.round(contentW * 0.72)
+  ctx.font = `bold ${titleSize}px ${serif}`
+  const moodLines = a?.mood ? wrapLines(ctx, a.mood, textMaxW) : []
+  ctx.font = `${capSize}px ${serif}`
+  const capLines = a?.caption
+    ? nakiwakare(a.caption.split('\n')).slice(0, 2).flatMap(l => wrapLines(ctx, l, textMaxW))
+    : []
+
+  const textBlockH =
+    labelLH + Math.round(H * 0.006) +
+    barH + mdGap +
+    (moodLines.length ? moodLines.length * titleLH + Math.round(H * 0.012) : 0) +
+    (a?.style ? labelLH + smGap : 0) +
+    capLines.length * capLH
+
+  let cy = mt
+
+  // ① Date
+  ctx.fillStyle = '#a0988c'
+  ctx.font = `${labelSize}px ${sans}`
+  ctx.textAlign = 'left'
+  ctx.fillText(fmtDate(date), tx, cy + labelLH)
+  cy += labelLH + Math.round(H * 0.006)
+
+  // ② Accent bar
+  ctx.fillStyle = pl.primary
+  ctx.fillRect(tx, cy, barW, barH)
+  cy += barH + mdGap
+
+  // ③ Mood
+  if (moodLines.length) {
+    ctx.fillStyle = '#141210'
+    ctx.font = `bold ${titleSize}px ${serif}`
+    ctx.textAlign = 'left'
+    for (const line of moodLines) {
+      ctx.fillText(line, tx, cy + titleLH)
+      cy += titleLH
+    }
+    cy += Math.round(H * 0.012)
+  }
+
+  // ④ Style tag
+  if (a?.style) {
+    ctx.fillStyle = pl.secondary || '#5a7a6a'
+    ctx.font = `${Math.round(W * 0.022)}px ${sans}`
+    ctx.textAlign = 'left'
+    ctx.fillText(`# ${a.style}`, tx, cy + labelLH)
+    cy += labelLH + smGap
+  }
+
+  // ⑤ Caption
+  if (capLines.length) {
+    ctx.fillStyle = '#5a5048'
+    ctx.font = `${capSize}px ${serif}`
+    ctx.textAlign = 'left'
+    for (const line of capLines) {
+      ctx.fillText(line, tx, cy + capLH)
+      cy += capLH
+    }
+  }
+
+  // ── Photo zone: below text, fills remaining height to mb ──
+  const photoTop = mt + textBlockH + Math.round(H * 0.055)
+  const photoZoneH = H - photoTop - mb
+  const ar = p[0].aspectRatio
+
+  let pw: number, ph: number
+  if (ar > 1.15) {
+    pw = Math.round(contentW * 0.92)
+    ph = Math.round(pw / ar)
+    if (ph > photoZoneH * 0.75) { ph = Math.round(photoZoneH * 0.75); pw = Math.round(ph * ar) }
+  } else if (ar < 0.85) {
+    ph = Math.round(photoZoneH * 0.78)
+    pw = Math.round(ph * ar)
+  } else {
+    pw = Math.round(contentW * 0.75)
+    ph = Math.round(pw / ar)
+  }
+
+  const px = ml + Math.round((contentW - pw) / 2)
+  const py = photoTop + Math.round((photoZoneH - ph) * 0.25)
+
+  const pos0 = positions[p[0].id] || { x: 50, y: 50, scale: 1 }
+  const b = await drawCover(ctx, cutouts[p[0].id] || p[0].dataUrl, px, py, pw, ph, pos0.x, pos0.y, pos0.scale)
+  bounds.push({ id: p[0].id, ...b })
 
   return bounds
 }
@@ -587,7 +799,7 @@ async function drawPopeye(
   ctx: CanvasRenderingContext2D, p: JournalPhoto[], a: PhotoAnalysis | null,
   pl: ColorPalette, cutouts: Record<string, string>,
   positions: Record<string, { x: number; y: number; scale: number }>,
-  W: number, H: number, _pad: number, _gap: number, serif: string
+  W: number, H: number, _pad: number, _gap: number, serif: string, date: Date
 ): Promise<PhotoBounds[]> {
   const bounds: PhotoBounds[] = []
   if (!p[0]) return bounds
@@ -676,7 +888,7 @@ async function drawPopeye(
   ctx.fillStyle = '#a0988c'
   ctx.font = `${labelSize}px ${sans}`
   ctx.textAlign = 'left'
-  ctx.fillText(fmtDate(), tx, cy + labelLH)
+  ctx.fillText(fmtDate(date), tx, cy + labelLH)
   cy += labelLH + Math.round(H * 0.006)
 
   // ② Accent bar — the POPEYE signature: thin, precise, meaningful
@@ -790,8 +1002,8 @@ async function drawCover(
   return { x: dx, y: dy, w: dw, h: dh }
 }
 
-function fmtDate() {
-  return new Date().toLocaleDateString('zh-CN', { year:'numeric', month:'long', day:'numeric', weekday:'short' })
+function fmtDate(d: Date) {
+  return d.toLocaleDateString('zh-CN', { year:'numeric', month:'long', day:'numeric', weekday:'short' })
 }
 
 /** 行頭禁則: a line must not START with sentence-ending punctuation —
@@ -817,9 +1029,21 @@ function drawGrid(ctx: CanvasRenderingContext2D, W: number, H: number) {
   for (let y=0;y<H;y+=gs){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
 }
 
+// ── Seeded PRNG (mulberry32) ──
+function mulberry32(seed: number): () => number {
+  return () => {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed)
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t
+    return ((t ^ t >>> 14) >>> 0) / 4294967296
+  }
+}
+
 function drawWashi(ctx: CanvasRenderingContext2D, W: number, H: number) {
-  for (let i=0;i<300;i++) {
-    ctx.fillStyle = `rgba(255,255,255,${Math.random()*0.1})`
-    ctx.fillRect(Math.random()*W, Math.random()*H, Math.random()*40+2, 0.5)
+  // Deterministic seed from canvas size — preview === export, pixel-identical
+  const rng = mulberry32(W * 7919 + H * 6271)
+  for (let i = 0; i < 300; i++) {
+    ctx.fillStyle = `rgba(255,255,255,${rng() * 0.1})`
+    ctx.fillRect(rng() * W, rng() * H, rng() * 40 + 2, 0.5)
   }
 }

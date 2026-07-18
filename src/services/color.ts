@@ -132,9 +132,24 @@ const CURATED_PALETTES: ColorPalette[] = [
   },
 ]
 
-function mapToPalette(extractedColors: string[]): ColorPalette {
+/** Deterministic hash from string → 0..1 */
+function hashStr(s: string): number {
+  let h = 0
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h) + s.charCodeAt(i)
+    h |= 0
+  }
+  return (h >>> 0) / 4294967295
+}
+
+function pickCurated(key: string): ColorPalette {
+  const idx = Math.floor(hashStr(key) * CURATED_PALETTES.length)
+  return desaturatePalette(CURATED_PALETTES[idx])
+}
+
+function mapToPalette(extractedColors: string[], photoKey: string): ColorPalette {
   if (extractedColors.length < 3) {
-    return CURATED_PALETTES[Math.floor(Math.random() * CURATED_PALETTES.length)]
+    return pickCurated(photoKey)
   }
 
   return desaturatePalette({
@@ -171,8 +186,8 @@ function desaturateHex(hex: string, amount: number): string {
 export async function extractColors(dataUrl: string): Promise<ColorPalette> {
   try {
     const colors = await extractDominantColors(dataUrl)
-    return mapToPalette(colors)
+    return mapToPalette(colors, dataUrl)
   } catch {
-    return CURATED_PALETTES[Math.floor(Math.random() * CURATED_PALETTES.length)]
+    return pickCurated(dataUrl)
   }
 }

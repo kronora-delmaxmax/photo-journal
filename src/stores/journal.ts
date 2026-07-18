@@ -44,9 +44,11 @@ export const useJournalStore = defineStore('journal', () => {
     background: '#faf8f5',
     text: '#2c2420',
   })
-  const selectedTemplate = ref('classic-1')
+  const selectedTemplate = ref('magazine')
+  const exportFormat = ref('xiaohongshu')
   const isAnalyzing = ref(false)
   const history = ref<JournalPage[]>([])
+  const photoPositions = ref<Record<string, { x: number; y: number; scale: number }>>({})
 
   const photoCount = computed(() => photos.value.length)
   const hasPhotos = computed(() => photos.value.length > 0)
@@ -64,6 +66,25 @@ export const useJournalStore = defineStore('journal', () => {
     photos.value.forEach(p => URL.revokeObjectURL(p.id))
     photos.value = []
     analysis.value = null
+    photoPositions.value = {}
+  }
+
+  function setPhotoPosition(id: string, x: number, y: number, scale?: number) {
+    const prev = photoPositions.value[id] || { x: 50, y: 50, scale: 1 }
+    photoPositions.value = { ...photoPositions.value, [id]: { x, y, scale: scale ?? prev.scale } }
+  }
+
+  function setPhotoScale(id: string, scale: number) {
+    const prev = photoPositions.value[id] || { x: 50, y: 50, scale: 1 }
+    photoPositions.value = { ...photoPositions.value, [id]: { ...prev, scale: Math.max(0.5, Math.min(3, scale)) } }
+  }
+
+  function getPhotoPosition(id: string): { x: number; y: number; scale: number } {
+    return photoPositions.value[id] || { x: 50, y: 50, scale: 1 }
+  }
+
+  function setExportFormat(id: string) {
+    exportFormat.value = id
   }
 
   function setAnalysis(a: PhotoAnalysis) {
@@ -94,10 +115,11 @@ export const useJournalStore = defineStore('journal', () => {
 
   return {
     photos, analysis, palette, selectedTemplate,
-    isAnalyzing, history,
+    isAnalyzing, history, photoPositions,
     photoCount, hasPhotos,
     addPhotos, removePhoto, clearPhotos,
     setAnalysis, setPalette, setTemplate,
-    saveToHistory,
+    saveToHistory, setPhotoPosition, setPhotoScale, getPhotoPosition,
+    exportFormat, setExportFormat,
   }
 })

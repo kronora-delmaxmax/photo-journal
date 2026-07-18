@@ -137,13 +137,35 @@ function mapToPalette(extractedColors: string[]): ColorPalette {
     return CURATED_PALETTES[Math.floor(Math.random() * CURATED_PALETTES.length)]
   }
 
-  return {
+  return desaturatePalette({
     primary: extractedColors[0] || '#c44d34',
     secondary: extractedColors[1] || '#4a7c8c',
     accent: extractedColors[2] || '#c8a84e',
     background: '#faf8f5',
     text: '#2c2420',
+  })
+}
+
+/** 低饱和: desaturate by 15% for Japanese magazine aesthetic */
+function desaturatePalette(p: ColorPalette): ColorPalette {
+  const amount = 0.15
+  return {
+    primary: desaturateHex(p.primary, amount),
+    secondary: desaturateHex(p.secondary, amount),
+    accent: desaturateHex(p.accent, amount),
+    background: p.background,
+    text: p.text,
   }
+}
+
+function desaturateHex(hex: string, amount: number): string {
+  const { r, g, b } = hexToRgb(hex)
+  const gray = 0.299 * r + 0.587 * g + 0.114 * b
+  return rgbToHex(
+    Math.round(r + (gray - r) * amount),
+    Math.round(g + (gray - g) * amount),
+    Math.round(b + (gray - b) * amount)
+  )
 }
 
 export async function extractColors(dataUrl: string): Promise<ColorPalette> {
